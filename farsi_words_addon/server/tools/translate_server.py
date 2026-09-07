@@ -6,7 +6,9 @@ each word take several seconds). Listens on 127.0.0.1 only -- it's an
 internal helper for server.js, not exposed outside the container.
 """
 import json
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import os
+import wave
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 import argostranslate.translate as translate
 from PersianG2p import Persian_g2p_converter
@@ -23,6 +25,39 @@ print("Translation model ready.", flush=True)
 print("Loading Persian G2P pronunciation model into memory...", flush=True)
 _g2p = Persian_g2p_converter(use_large=True)
 print("G2P model ready.", flush=True)
+
+# Load the Piper voice ONCE and keep it in memory. Previously every word
+# launched a fresh `piper` process, which re-read the ~60MB voice model from
+# disk each time -- fine for one word, but that reload was the dominant cost
+# when generating audio for a whole word list.
+_PIPER_MODEL = "/app/models/fa_IR-gyro-medium.onnx"
+_voice = None
+try:
+    from piper import PiperVoice
+    print("Loading Piper voice model into memory...", flush=True)
+    _voice = PiperVoice.load(_PIPER_MODEL)
+    print("Piper voice ready.", flush=True)
+except Exception as exc:
+    # Not fatal: server.js falls back to running the piper command per word,
+    # which is slower but works. Logged so the cause is visible.
+    print(f"Could not preload Piper voice ({exc!r}); "
+          f"audio will fall back to the slower per-word method.", flush=True)
+
+
+def synthesize(text, out_path):
+    """Write a WAV pronunciation of `text` to `out_path`."""
+    if _voice is None:
+        raise RuntimeError("Piper voice not loaded")
+    tmp_path = out_path + ".tmp"
+    with wave.open(tmp_path, "wb") as wav_file:
+        # The method was renamed between Piper releases; support both.
+        if hasattr(_voice, "synthesize_wav"):
+            _voice.synthesize_wav(text, wav_file)
+        else:
+            _voice.synthesize(text, wav_file)
+    # Move into place only once fully written, so a partial file is never
+    # served to the app as if it were finished audio.
+    os.replace(tmp_path, out_path)
 
 _DICT_PATH = "/app/models/fa_en_dict.json"
 try:
@@ -133,6 +168,16 @@ class Handler(BaseHTTPRequestHandler):
         elif parsed.path == "/transliterate":
             result = transliterate_word(text)
             body = json.dumps({"translit": result}).encode("utf-8")
+        elif parsed.path == "/speak":
+            out_path = qs.get("out", [""])[0]
+            ok = False
+            if text.strip() and out_path:
+                try:
+                    synthesize(text.strip(), out_path)
+                    ok = True
+                except Exception as exc:
+                    print(f"Piper synthesis failed for {text!r}: {exc!r}", flush=True)
+            body = json.dumps({"ok": ok}).encode("utf-8")
         else:
             self.send_response(404)
             self.end_headers()
@@ -146,4 +191,6 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    HTTPServer(("127.0.0.1", 5001), Handler).serve_forever()
+    # Threading so that a slow audio synthesis doesn't hold up a translation
+    # or transliteration request happening at the same time.
+    ThreadingHTTPServer(("127.0.0.1", 5001), Handler).serve_forever()
