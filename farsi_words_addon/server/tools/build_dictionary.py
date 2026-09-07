@@ -25,7 +25,10 @@ import urllib.request
 from fa_normalize import normalize_fa
 from transliterate import ipa_to_latin_checked
 
-URL = "https://kaikki.org/dictionary/Persian/kaikki.org-dictionary-Persian.json"
+URL = "https://kaikki.org/dictionary/Persian/kaikki.org-dictionary-Persian.jsonl"
+# kaikki.org marks this specific download as deprecated (though still live
+# as of this writing) -- if this ever starts failing again, check
+# https://kaikki.org/dictionary/Persian/index.html for the current link.
 RAW_PATH = "/tmp/fa_wiktionary_raw.jsonl"
 OUT_PATH = "/app/models/fa_en_dict.json"
 IPA_OUT_PATH = "/app/models/fa_ipa_dict.json"
