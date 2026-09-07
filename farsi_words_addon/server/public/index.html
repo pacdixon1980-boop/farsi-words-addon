@@ -135,6 +135,7 @@ const state = {
   boxes: JSON.parse(localStorage.getItem("farsi-boxes") || "{}"),
   streak: JSON.parse(localStorage.getItem("farsi-streak") || '{"count":0,"lastDate":null,"total":0}'),
   editingId: null,
+  manageQuery: "",
 };
 
 const MAX_BOX = 5;
@@ -345,13 +346,25 @@ function renderManage() {
   if (!state.words.length) {
     return `<div class="empty">No words yet.</div>`;
   }
-  const missingAudioCount = state.words.filter(w => !w.has_audio && w.farsi).length;
+  const query = (state.manageQuery || "").trim().toLowerCase();
+  const filtered = query
+    ? state.words.filter(w =>
+        (w.farsi || "").toLowerCase().includes(query) ||
+        w.english.toLowerCase().includes(query) ||
+        w.translit.toLowerCase().includes(query) ||
+        w.category.toLowerCase().includes(query)
+      )
+    : state.words;
+  const missingAudioCount = filtered.filter(w => !w.has_audio && w.farsi).length;
   const grouped = {};
-  state.words.forEach(w => {
+  filtered.forEach(w => {
     grouped[w.category] = grouped[w.category] || [];
     grouped[w.category].push(w);
   });
   return `
+    <input id="manage-search" class="edit-field" style="margin-bottom:12px"
+      placeholder="Search words..." value="${escapeAttr(state.manageQuery)}"
+      oninput="setManageQuery(this.value)" />
     ${missingAudioCount > 0 ? `
       <div class="bulk-bar">
         <span>${missingAudioCount} word${missingAudioCount === 1 ? "" : "s"} missing audio</span>
@@ -359,13 +372,23 @@ function renderManage() {
       </div>
       <div class="toast" id="bulk-status"></div>
     ` : ""}
-    ${Object.entries(grouped).map(([cat, words]) => `
+    ${Object.keys(grouped).length ? Object.entries(grouped).map(([cat, words]) => `
       <div class="manage-category">
         <div class="manage-cat-title">${cat}</div>
         ${words.map(w => renderManageRow(w)).join("")}
       </div>
-    `).join("")}
+    `).join("") : `<div class="empty">No matches.</div>`}
   `;
+}
+
+function setManageQuery(v) {
+  state.manageQuery = v;
+  render();
+  const input = document.getElementById("manage-search");
+  if (input) {
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  }
 }
 
 function renderManageRow(w) {
