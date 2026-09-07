@@ -36,16 +36,22 @@ STOPWORDS = {
 
 from PersianG2p import Persian_g2p_converter
 
-_HOUSE_STYLE = {
-    "ā": "â", "š": "sh", "ž": "zh", "ġ": "gh",
-    "x": "kh", "č": "ch", "ū": "oo", "ī": "ee",
-}
+from fa_normalize import normalize_fa
+
+# Kept identical to the conversion in translate_server.py so words imported
+# here are spelled the same way as words added by hand later.
+_HOUSE_STYLE = [
+    ("ā", "aa"), ("â", "aa"), ("Ā", "aa"), ("A", "aa"),
+    ("š", "sh"), ("ž", "zh"), ("č", "ch"), ("ǧ", "gh"), ("ġ", "gh"),
+    ("x", "kh"), ("q", "gh"), ("ū", "oo"), ("u", "oo"), ("ī", "ee"),
+    ("'", ""), ("ʼ", ""), ("`", ""),
+]
 
 
 def to_house_style(text):
     out = text
-    for k, v in _HOUSE_STYLE.items():
-        out = out.replace(k, v)
+    for old, new in _HOUSE_STYLE:
+        out = out.replace(old, new)
     return out
 
 
@@ -60,10 +66,12 @@ _g2p = Persian_g2p_converter(use_large=True)
 
 
 def transliterate(text):
-    if text in pron_dict:
-        return pron_dict[text]
+    key = normalize_fa(text)
+    if key in pron_dict:
+        return pron_dict[key]
     try:
-        return to_house_style(_g2p.transliterate(text))
+        collapsed = "".join(str(_g2p.transliterate(text)).split())
+        return to_house_style(collapsed)
     except Exception:
         return ""
 
@@ -90,7 +98,7 @@ try:
         if not re.match(r"^[\u0600-\u06FF]+$", word):
             continue  # skip anything mixed with digits/Latin letters/punctuation
         seen.add(word)
-        english = dictionary.get(word)
+        english = dictionary.get(normalize_fa(word))
         if not english:
             continue  # only include words with a real dictionary gloss
         out.append({

@@ -11,6 +11,8 @@ from urllib.parse import urlparse, parse_qs
 import argostranslate.translate as translate
 from PersianG2p import Persian_g2p_converter
 
+from fa_normalize import normalize_fa
+
 print("Loading Argos Translate Persian -> English model into memory...", flush=True)
 _installed = translate.get_installed_languages()
 _fa = next(l for l in _installed if l.code == "fa")
@@ -40,34 +42,51 @@ except Exception as exc:
     print(f"Could not load pronunciation dictionary file: {exc!r}", flush=True)
     _pron_dict = {}
 
-# PersianG2p outputs accented Latin (ā, š, ž, ġ, x) rather than raw IPA.
-# Normalize it to the same plain-ASCII spelling convention used everywhere
-# else in this app (â, sh, zh, gh, kh).
-_HOUSE_STYLE = {
-    "ā": "â", "š": "sh", "ž": "zh", "ġ": "gh",
-    "x": "kh", "č": "ch", "ū": "oo", "ī": "ee",
-}
+# PersianG2p outputs accented Latin (ā, š, ž, ġ) rather than raw IPA.
+# Convert it to the English-alphabet-only convention used everywhere else in
+# this app. Ordering matters: multi-character results are produced by some
+# rules, so anything that could re-match must come first.
+_HOUSE_STYLE = [
+    ("ā", "aa"), ("â", "aa"), ("Ā", "aa"), ("A", "aa"),
+    ("š", "sh"), ("ž", "zh"), ("č", "ch"), ("ǧ", "gh"), ("ġ", "gh"),
+    ("x", "kh"), ("q", "gh"), ("ū", "oo"), ("u", "oo"), ("ī", "ee"),
+    ("'", ""), ("ʼ", ""), ("`", ""),
+]
 
 
 def to_house_style(text):
     out = text
-    for k, v in _HOUSE_STYLE.items():
-        out = out.replace(k, v)
+    for old, new in _HOUSE_STYLE:
+        out = out.replace(old, new)
     return out
 
 
 def transliterate_word(text):
-    key = text.strip()
-    if not key:
+    """Spell out how a Persian word or phrase sounds, in English letters.
+
+    Each word is looked up and converted individually. That matters for two
+    reasons: the pronunciation dictionary is keyed per-word, and the G2P
+    model spells unfamiliar words out letter-by-letter with spaces between
+    them ("x o d aa"), which has to be closed up per word without also
+    losing the real spaces between separate words.
+    """
+    if not text or not text.strip():
         return ""
-    if key in _pron_dict:
-        return _pron_dict[key]
-    try:
-        raw = _g2p.transliterate(key)
-        return to_house_style(raw)
-    except Exception as exc:
-        print(f"G2P error for {key!r}: {exc!r}", flush=True)
-        return ""
+    spelled = []
+    for word in text.strip().split():
+        key = normalize_fa(word)
+        if key in _pron_dict:
+            spelled.append(_pron_dict[key])
+            continue
+        try:
+            raw = _g2p.transliterate(word)
+            # Close up the model's letter-by-letter spacing within this word.
+            collapsed = "".join(str(raw).split())
+            converted = to_house_style(collapsed)
+            spelled.append(converted)
+        except Exception as exc:
+            print(f"G2P error for {word!r}: {exc!r}", flush=True)
+    return " ".join(w for w in spelled if w)
 
 
 def clean_translation(text):
@@ -100,7 +119,7 @@ class Handler(BaseHTTPRequestHandler):
         text = qs.get("text", [""])[0]
 
         if parsed.path == "/translate":
-            key = text.strip()
+            key = normalize_fa(text)
             if key in _dictionary:
                 result = _dictionary[key]
             else:
