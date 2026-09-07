@@ -35,6 +35,7 @@ STOPWORDS = {
 }
 
 from transliterate import ipa_to_latin  # noqa: E402  (sits alongside this script)
+from g2p_fa import G2P_Fa
 
 
 try:
@@ -43,17 +44,15 @@ try:
 except Exception:
     pron_dict = {}
 
+print("Loading Persian G2P model for starter word transliteration...", flush=True)
+_g2p = G2P_Fa()
+
 
 def transliterate(text):
     if text in pron_dict:
         return pron_dict[text]
     try:
-        proc = subprocess.run(
-            ["espeak-ng", "-v", "fa", "--ipa", "-q", text],
-            capture_output=True, text=True, timeout=10,
-        )
-        words = proc.stdout.strip().split()
-        return " ".join(w for w in (ipa_to_latin(x) for x in words) if w)
+        return ipa_to_latin(_g2p(text))
     except Exception:
         return ""
 
