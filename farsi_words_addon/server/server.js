@@ -89,6 +89,28 @@ app.use("/audio", express.static(AUDIO_DIR));
 const TOOLS_DIR = path.join(__dirname, "tools");
 const PIPER_MODEL = "/app/models/fa_IR-gyro-medium.onnx";
 
+// Mirrors tools/fa_normalize.py. The same Persian word typed on an Arabic
+// keyboard uses different characters (ي/ك) than on a Persian one (ی/ک), so
+// without this a saved correction wouldn't be found next time.
+const FA_CHAR_MAP = {
+  "\u064A": "\u06CC", "\u0649": "\u06CC", "\u0643": "\u06A9",
+  "\u0623": "\u0627", "\u0625": "\u0627", "\u0622": "\u0627",
+  "\u0671": "\u0627", "\u0629": "\u0647", "\u06C0": "\u0647",
+  "\u0624": "\u0648", "\u200C": "", "\u200F": "", "\u200E": "", "\u0640": "",
+};
+
+function normalizeFa(text) {
+  if (!text) return "";
+  let out = "";
+  for (const ch of String(text).trim()) {
+    const code = ch.codePointAt(0);
+    // Strip short-vowel and other diacritic marks.
+    if ((code >= 0x064b && code <= 0x0652) || code === 0x0670) continue;
+    out += Object.prototype.hasOwnProperty.call(FA_CHAR_MAP, ch) ? FA_CHAR_MAP[ch] : ch;
+  }
+  return out.trim();
+}
+
 function runPython(script, text, timeoutMs = 15000) {
   return new Promise((resolve) => {
     execFile("python3", [path.join(TOOLS_DIR, script), text], { timeout: timeoutMs }, (err, stdout, stderr) => {
@@ -183,9 +205,11 @@ app.post("/api/suggest", async (req, res) => {
   // past addition or a manual correction), reuse that answer directly
   // instead of re-asking the AI models -- this means a correction made once
   // via Manage is never re-guessed wrong again.
+  const target = normalizeFa(key);
   const existing = db
-    .prepare("SELECT english, translit FROM words WHERE farsi = ? LIMIT 1")
-    .get(key);
+    .prepare("SELECT farsi, english, translit FROM words WHERE farsi != '' AND english != ''")
+    .all()
+    .find((w) => normalizeFa(w.farsi) === target);
   if (existing) {
     return res.json({ english: existing.english, translit: existing.translit });
   }
