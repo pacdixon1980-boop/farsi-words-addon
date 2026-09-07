@@ -356,8 +356,13 @@ function renderManage() {
       )
     : state.words;
   const missingAudioCount = filtered.filter(w => !w.has_audio && w.farsi).length;
+  // Building thousands of rows at once makes the page crawl on a phone.
+  // Show a manageable slice and let the search box narrow things down.
+  const MANAGE_LIMIT = 100;
+  const shown = filtered.slice(0, MANAGE_LIMIT);
+  const hiddenCount = filtered.length - shown.length;
   const grouped = {};
-  filtered.forEach(w => {
+  shown.forEach(w => {
     grouped[w.category] = grouped[w.category] || [];
     grouped[w.category].push(w);
   });
@@ -378,17 +383,25 @@ function renderManage() {
         ${words.map(w => renderManageRow(w)).join("")}
       </div>
     `).join("") : `<div class="empty">No matches.</div>`}
+    ${hiddenCount > 0 ? `<div class="session-line">Showing ${shown.length} of ${filtered.length} — search to narrow down.</div>` : ""}
   `;
 }
 
+let _searchTimer = null;
+
 function setManageQuery(v) {
   state.manageQuery = v;
-  render();
-  const input = document.getElementById("manage-search");
-  if (input) {
-    input.focus();
-    input.setSelectionRange(input.value.length, input.value.length);
-  }
+  // Re-rendering the list on every keystroke is noticeably slow once the
+  // word list is large, so wait for a short pause in typing first.
+  clearTimeout(_searchTimer);
+  _searchTimer = setTimeout(() => {
+    render();
+    const input = document.getElementById("manage-search");
+    if (input) {
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+  }, 220);
 }
 
 function renderManageRow(w) {
@@ -449,10 +462,28 @@ async function generateMissingAudio() {
   const missing = state.words.filter(w => !w.has_audio && w.farsi);
   const statusEl = document.getElementById("bulk-status");
   if (!missing.length) return;
-  for (let i = 0; i < missing.length; i++) {
-    if (statusEl) statusEl.textContent = `Generating audio… ${i + 1} of ${missing.length}`;
-    await fetch(`api/words/${missing[i].id}/audio`, { method: "POST" });
+  let done = 0;
+  const CONCURRENCY = 3;
+
+  // Run a few at a time rather than strictly one after another. The server
+  // keeps the voice model loaded, so overlapping requests make good use of
+  // a multi-core machine without piling up too much work at once.
+  async function worker() {
+    while (true) {
+      const item = missing[done];
+      if (!item) return;
+      done += 1;
+      const label = done;
+      if (statusEl) statusEl.textContent = `Generating audio… ${label} of ${missing.length}`;
+      try {
+        await fetch(`api/words/${item.id}/audio`, { method: "POST" });
+      } catch (err) {
+        // Skip this one and keep going; it stays flagged as missing audio.
+      }
+    }
   }
+
+  await Promise.all(Array.from({ length: CONCURRENCY }, worker));
   if (statusEl) statusEl.textContent = "Done!";
   await loadWords();
 }
