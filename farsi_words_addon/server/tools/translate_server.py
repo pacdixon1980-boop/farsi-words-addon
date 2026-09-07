@@ -17,6 +17,15 @@ _en = next(l for l in _installed if l.code == "en")
 _translation = _fa.get_translation(_en)
 print("Translation model ready.", flush=True)
 
+_DICT_PATH = "/app/models/fa_en_dict.json"
+try:
+    with open(_DICT_PATH, "r", encoding="utf-8") as f:
+        _dictionary = json.load(f)
+    print(f"Loaded {len(_dictionary)} dictionary entries.", flush=True)
+except Exception as exc:
+    print(f"Could not load dictionary file: {exc!r}", flush=True)
+    _dictionary = {}
+
 
 def clean_translation(text):
     """Collapse a known failure mode of small offline translation models on
@@ -50,12 +59,16 @@ class Handler(BaseHTTPRequestHandler):
             return
         qs = parse_qs(parsed.query)
         text = qs.get("text", [""])[0]
-        try:
-            result = _translation.translate(text) if text else ""
-            result = clean_translation(result)
-        except Exception as exc:
-            print(f"Translation error: {exc!r}", flush=True)
-            result = ""
+        key = text.strip()
+        if key in _dictionary:
+            result = _dictionary[key]
+        else:
+            try:
+                result = _translation.translate(text) if text else ""
+                result = clean_translation(result)
+            except Exception as exc:
+                print(f"Translation error: {exc!r}", flush=True)
+                result = ""
         body = json.dumps({"translation": result}).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
