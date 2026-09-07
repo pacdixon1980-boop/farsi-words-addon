@@ -16,7 +16,7 @@ COPY server/ .
 # don't need for command-line translation).
 RUN pip3 install --break-system-packages --no-cache-dir "argostranslate>=1.9,<2"
 RUN pip3 install --break-system-packages --no-cache-dir piper-tts
-RUN pip3 install --break-system-packages --no-cache-dir g2p_fa
+RUN pip3 install --break-system-packages --no-cache-dir PersianG2p
 
 # Build the Persian -> English dictionary lookup (see build_dictionary.py
 # for details and graceful-failure behavior).
