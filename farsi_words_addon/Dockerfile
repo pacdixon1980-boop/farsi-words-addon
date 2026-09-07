@@ -14,6 +14,11 @@ COPY server/ .
 # for details and graceful-failure behavior).
 RUN python3 /app/tools/build_dictionary.py
 
+# Build a ~1000-word starter vocabulary list from an open frequency list,
+# matched against the dictionary above for quality (see
+# build_starter_words.py for details and graceful-failure behavior).
+RUN python3 /app/tools/build_starter_words.py
+
 # Installed as two separate steps so pip resolves each independently,
 # instead of backtracking argostranslate into an old version that pulls in
 # the PyQt5 GUI toolkit (which needs a Qt build toolchain we don't have and
