@@ -37,7 +37,16 @@ STOPWORDS = {
 from transliterate import ipa_to_latin  # noqa: E402  (sits alongside this script)
 
 
+try:
+    with open("/app/models/fa_ipa_dict.json", encoding="utf-8") as f:
+        pron_dict = json.load(f)
+except Exception:
+    pron_dict = {}
+
+
 def transliterate(text):
+    if text in pron_dict:
+        return pron_dict[text]
     try:
         proc = subprocess.run(
             ["espeak-ng", "-v", "fa", "--ipa", "-q", text],

@@ -11,8 +11,16 @@ ch, j). It is a best-effort guess, not a lookup -- always editable in the UI.
 Usage: transliterate.py "متن فارسی"
 """
 import re
+import json
 import subprocess
 import sys
+
+IPA_DICT_PATH = "/app/models/fa_ipa_dict.json"
+try:
+    with open(IPA_DICT_PATH, encoding="utf-8") as f:
+        _pron_dict = json.load(f)
+except Exception:
+    _pron_dict = {}
 
 # Longest IPA symbols first so multi-character phonemes match before their
 # single-character prefixes do.
@@ -77,6 +85,10 @@ def main():
         print("", end="")
         return
     text = sys.argv[1]
+    key = text.strip()
+    if key in _pron_dict:
+        print(_pron_dict[key])
+        return
     try:
         proc = subprocess.run(
             ["espeak-ng", "-v", "fa", "--ipa", "-q", text],
