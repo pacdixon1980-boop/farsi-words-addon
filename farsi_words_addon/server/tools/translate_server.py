@@ -9,8 +9,7 @@ import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 import argostranslate.translate as translate
-from g2p_fa import G2P_Fa
-from transliterate import ipa_to_latin
+from PersianG2p import Persian_g2p_converter
 
 print("Loading Argos Translate Persian -> English model into memory...", flush=True)
 _installed = translate.get_installed_languages()
@@ -20,7 +19,7 @@ _translation = _fa.get_translation(_en)
 print("Translation model ready.", flush=True)
 
 print("Loading Persian G2P pronunciation model into memory...", flush=True)
-_g2p = G2P_Fa()
+_g2p = Persian_g2p_converter(use_large=True)
 print("G2P model ready.", flush=True)
 
 _DICT_PATH = "/app/models/fa_en_dict.json"
@@ -41,6 +40,21 @@ except Exception as exc:
     print(f"Could not load pronunciation dictionary file: {exc!r}", flush=True)
     _pron_dict = {}
 
+# PersianG2p outputs accented Latin (ā, š, ž, ġ, x) rather than raw IPA.
+# Normalize it to the same plain-ASCII spelling convention used everywhere
+# else in this app (â, sh, zh, gh, kh).
+_HOUSE_STYLE = {
+    "ā": "â", "š": "sh", "ž": "zh", "ġ": "gh",
+    "x": "kh", "č": "ch", "ū": "oo", "ī": "ee",
+}
+
+
+def to_house_style(text):
+    out = text
+    for k, v in _HOUSE_STYLE.items():
+        out = out.replace(k, v)
+    return out
+
 
 def transliterate_word(text):
     key = text.strip()
@@ -49,8 +63,8 @@ def transliterate_word(text):
     if key in _pron_dict:
         return _pron_dict[key]
     try:
-        ipa = _g2p(key)
-        return ipa_to_latin(ipa)
+        raw = _g2p.transliterate(key)
+        return to_house_style(raw)
     except Exception as exc:
         print(f"G2P error for {key!r}: {exc!r}", flush=True)
         return ""

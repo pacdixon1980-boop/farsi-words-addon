@@ -34,8 +34,19 @@ STOPWORDS = {
     "پس", "نیز", "دیگر", "روی", "زیر", "بین", "بعد", "قبل", "چند",
 }
 
-from transliterate import ipa_to_latin  # noqa: E402  (sits alongside this script)
-from g2p_fa import G2P_Fa
+from PersianG2p import Persian_g2p_converter
+
+_HOUSE_STYLE = {
+    "ā": "â", "š": "sh", "ž": "zh", "ġ": "gh",
+    "x": "kh", "č": "ch", "ū": "oo", "ī": "ee",
+}
+
+
+def to_house_style(text):
+    out = text
+    for k, v in _HOUSE_STYLE.items():
+        out = out.replace(k, v)
+    return out
 
 
 try:
@@ -45,14 +56,14 @@ except Exception:
     pron_dict = {}
 
 print("Loading Persian G2P model for starter word transliteration...", flush=True)
-_g2p = G2P_Fa()
+_g2p = Persian_g2p_converter(use_large=True)
 
 
 def transliterate(text):
     if text in pron_dict:
         return pron_dict[text]
     try:
-        return ipa_to_latin(_g2p(text))
+        return to_house_style(_g2p.transliterate(text))
     except Exception:
         return ""
 
