@@ -126,6 +126,26 @@ async function translateFarsi(text) {
   return "";
 }
 
+// Calls the same persistent Python server for transliteration, which now
+// uses a Persian G2P neural model instead of the older espeak-ng guess.
+async function transliterateFarsi(text) {
+  const url = `http://127.0.0.1:5001/transliterate?text=${encodeURIComponent(text)}`;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+      if (res.ok) {
+        const data = await res.json();
+        return data.translit || "";
+      }
+    } catch (err) {
+      // Server likely still starting up -- wait and retry.
+    }
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  console.error("Transliteration server did not respond after retries.");
+  return "";
+}
+
 function generateAudio(farsiText, wordId) {
   return new Promise((resolve) => {
     const outPath = path.join(AUDIO_DIR, `${wordId}.wav`);
@@ -159,7 +179,7 @@ app.post("/api/suggest", async (req, res) => {
   }
   const [english, translit] = await Promise.all([
     translateFarsi(farsi.trim()),
-    runPython("transliterate.py", farsi.trim()),
+    transliterateFarsi(farsi.trim()),
   ]);
   res.json({ english, translit });
 });
