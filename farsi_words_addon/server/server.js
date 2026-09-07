@@ -28,12 +28,13 @@ db.exec(`
 const existingCols = db.prepare("PRAGMA table_info(words)").all().map((c) => c.name);
 if (!existingCols.includes("farsi")) db.exec("ALTER TABLE words ADD COLUMN farsi TEXT");
 if (!existingCols.includes("has_audio")) db.exec("ALTER TABLE words ADD COLUMN has_audio INTEGER DEFAULT 0");
+if (!existingCols.includes("farsi_norm")) db.exec("ALTER TABLE words ADD COLUMN farsi_norm TEXT");
 
 // Seed with the starter vocabulary the first time the DB is created
 const seedCount = db.prepare("SELECT COUNT(*) AS c FROM words").get().c;
 if (seedCount === 0) {
   const seed = db.prepare(
-    "INSERT INTO words (category, english, translit, farsi, added_by) VALUES (?, ?, ?, ?, ?)"
+    "INSERT INTO words (category, english, translit, farsi, farsi_norm, added_by) VALUES (?, ?, ?, ?, ?, ?)"
   );
   const starter = [
     ["Family & baby", "mom", "maman", "مامان"],
@@ -57,7 +58,7 @@ if (seedCount === 0) {
   ];
   const insertMany = db.transaction((rows) => {
     for (const [category, english, translit, farsi] of rows) {
-      seed.run(category, english, translit, farsi, "starter set");
+      seed.run(category, english, translit, farsi, normalizeFa(farsi), "starter set");
     }
   });
   insertMany(starter);
@@ -70,7 +71,7 @@ if (seedCount === 0) {
       const bigList = JSON.parse(fs.readFileSync(bigListPath, "utf-8"));
       const insertBig = db.transaction((rows) => {
         for (const w of rows) {
-          seed.run(w.category, w.english, w.translit || "", w.farsi, "common words list");
+          seed.run(w.category, w.english, w.translit || "", w.farsi, normalizeFa(w.farsi), "common words list");
         }
       });
       insertBig(bigList);
@@ -109,6 +110,23 @@ function normalizeFa(text) {
     out += Object.prototype.hasOwnProperty.call(FA_CHAR_MAP, ch) ? FA_CHAR_MAP[ch] : ch;
   }
   return out.trim();
+}
+
+// Store the normalized form alongside each word and index it, so looking up
+// a previously-corrected word is a single indexed query rather than reading
+// and normalizing the whole table on every suggestion.
+db.exec("CREATE INDEX IF NOT EXISTS idx_words_farsi_norm ON words(farsi_norm)");
+{
+  const needsBackfill = db
+    .prepare("SELECT id, farsi FROM words WHERE farsi_norm IS NULL AND farsi IS NOT NULL AND farsi != ''")
+    .all();
+  if (needsBackfill.length) {
+    const setNorm = db.prepare("UPDATE words SET farsi_norm = ? WHERE id = ?");
+    db.transaction((rows) => {
+      for (const r of rows) setNorm.run(normalizeFa(r.farsi), r.id);
+    })(needsBackfill);
+    console.log(`Backfilled normalized spellings for ${needsBackfill.length} words.`);
+  }
 }
 
 function runPython(script, text, timeoutMs = 15000) {
@@ -168,13 +186,32 @@ async function transliterateFarsi(text) {
   return "";
 }
 
-function generateAudio(farsiText, wordId) {
+// Generate pronunciation audio. Prefers the persistent Python server, which
+// keeps the voice model loaded in memory; falls back to launching the piper
+// command per word if that server isn't available.
+async function generateAudio(farsiText, wordId) {
+  const outPath = path.join(AUDIO_DIR, `${wordId}.wav`);
+  try {
+    const url =
+      `http://127.0.0.1:5001/speak?text=${encodeURIComponent(farsiText)}` +
+      `&out=${encodeURIComponent(outPath)}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(30000) });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.ok && fs.existsSync(outPath)) return true;
+    }
+  } catch (err) {
+    // Fall through to the slower per-word method below.
+  }
+  return generateAudioSubprocess(farsiText, wordId, outPath);
+}
+
+function generateAudioSubprocess(farsiText, wordId, outPath) {
   return new Promise((resolve) => {
-    const outPath = path.join(AUDIO_DIR, `${wordId}.wav`);
     execFile(
       "piper",
       ["-m", PIPER_MODEL, "-f", outPath, "--", farsiText],
-      { timeout: 20000 },
+      { timeout: 30000 },
       (err, stdout, stderr) => {
         if (err) {
           console.error(`Piper TTS failed for word ${wordId}:`, err.message);
@@ -205,11 +242,11 @@ app.post("/api/suggest", async (req, res) => {
   // past addition or a manual correction), reuse that answer directly
   // instead of re-asking the AI models -- this means a correction made once
   // via Manage is never re-guessed wrong again.
-  const target = normalizeFa(key);
   const existing = db
-    .prepare("SELECT farsi, english, translit FROM words WHERE farsi != '' AND english != ''")
-    .all()
-    .find((w) => normalizeFa(w.farsi) === target);
+    .prepare(
+      "SELECT english, translit FROM words WHERE farsi_norm = ? AND english != '' LIMIT 1"
+    )
+    .get(normalizeFa(key));
   if (existing) {
     return res.json({ english: existing.english, translit: existing.translit });
   }
@@ -228,20 +265,24 @@ app.post("/api/words", async (req, res) => {
   }
   const info = db
     .prepare(
-      "INSERT INTO words (category, english, translit, farsi, added_by) VALUES (?, ?, ?, ?, ?)"
+      "INSERT INTO words (category, english, translit, farsi, farsi_norm, added_by) VALUES (?, ?, ?, ?, ?, ?)"
     )
-    .run(category.trim(), english.trim(), translit.trim(), (farsi || "").trim(), (addedBy || "").trim());
+    .run(category.trim(), english.trim(), translit.trim(), (farsi || "").trim(), normalizeFa(farsi), (addedBy || "").trim());
   const wordId = info.lastInsertRowid;
+  const row = db.prepare("SELECT * FROM words WHERE id = ?").get(wordId);
+
+  // Respond straight away rather than making the person wait several seconds
+  // watching a "Saving..." message. The audio appears on the card shortly
+  // after; the Manage tab shows which words are still waiting for it.
+  res.status(201).json(row);
 
   if (farsi && farsi.trim()) {
-    const ok = await generateAudio(farsi.trim(), wordId);
-    if (ok) {
-      db.prepare("UPDATE words SET has_audio = 1 WHERE id = ?").run(wordId);
-    }
+    generateAudio(farsi.trim(), wordId)
+      .then((ok) => {
+        if (ok) db.prepare("UPDATE words SET has_audio = 1 WHERE id = ?").run(wordId);
+      })
+      .catch((err) => console.error("Background audio generation failed:", err.message));
   }
-
-  const row = db.prepare("SELECT * FROM words WHERE id = ?").get(wordId);
-  res.status(201).json(row);
 });
 
 app.put("/api/words/:id", async (req, res) => {
@@ -253,8 +294,8 @@ app.put("/api/words/:id", async (req, res) => {
     return res.status(400).json({ error: "category, english, and translit are required" });
   }
   db.prepare(
-    "UPDATE words SET category = ?, english = ?, translit = ?, farsi = ? WHERE id = ?"
-  ).run(category.trim(), english.trim(), translit.trim(), (farsi || "").trim(), id);
+    "UPDATE words SET category = ?, english = ?, translit = ?, farsi = ?, farsi_norm = ? WHERE id = ?"
+  ).run(category.trim(), english.trim(), translit.trim(), (farsi || "").trim(), normalizeFa(farsi), id);
 
   if (farsi && farsi.trim()) {
     const ok = await generateAudio(farsi.trim(), id);
