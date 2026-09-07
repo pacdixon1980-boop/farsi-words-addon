@@ -177,9 +177,22 @@ app.post("/api/suggest", async (req, res) => {
   if (!farsi || !farsi.trim()) {
     return res.status(400).json({ error: "farsi text is required" });
   }
+  const key = farsi.trim();
+
+  // If this exact word already exists in the family's own word list (from a
+  // past addition or a manual correction), reuse that answer directly
+  // instead of re-asking the AI models -- this means a correction made once
+  // via Manage is never re-guessed wrong again.
+  const existing = db
+    .prepare("SELECT english, translit FROM words WHERE farsi = ? LIMIT 1")
+    .get(key);
+  if (existing) {
+    return res.json({ english: existing.english, translit: existing.translit });
+  }
+
   const [english, translit] = await Promise.all([
-    translateFarsi(farsi.trim()),
-    transliterateFarsi(farsi.trim()),
+    translateFarsi(key),
+    transliterateFarsi(key),
   ]);
   res.json({ english, translit });
 });
