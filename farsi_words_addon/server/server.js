@@ -61,6 +61,24 @@ if (seedCount === 0) {
     }
   });
   insertMany(starter);
+
+  // Also seed the larger frequency-list-based starter vocabulary, if it
+  // was built successfully at image build time (see build_starter_words.py).
+  try {
+    const bigListPath = "/app/models/starter_words.json";
+    if (fs.existsSync(bigListPath)) {
+      const bigList = JSON.parse(fs.readFileSync(bigListPath, "utf-8"));
+      const insertBig = db.transaction((rows) => {
+        for (const w of rows) {
+          seed.run(w.category, w.english, w.translit || "", w.farsi, "common words list");
+        }
+      });
+      insertBig(bigList);
+      console.log(`Seeded ${bigList.length} words from the common-words starter list.`);
+    }
+  } catch (err) {
+    console.error("Failed to seed starter word list:", err.message);
+  }
 }
 
 const app = express();
