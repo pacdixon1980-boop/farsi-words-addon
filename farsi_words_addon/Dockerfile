@@ -25,6 +25,7 @@ RUN python3 /app/tools/build_starter_words.py
 # don't need for command-line translation).
 RUN pip3 install --break-system-packages --no-cache-dir "argostranslate>=1.9,<2"
 RUN pip3 install --break-system-packages --no-cache-dir piper-tts
+RUN pip3 install --break-system-packages --no-cache-dir g2p_fa
 
 # Install the Persian -> English Argos Translate model at build time
 RUN python3 -c "\
