@@ -10,6 +10,10 @@ COPY server/package.json .
 RUN npm install --production
 COPY server/ .
 
+# Build the Persian -> English dictionary lookup (see build_dictionary.py
+# for details and graceful-failure behavior).
+RUN python3 /app/tools/build_dictionary.py
+
 # Installed as two separate steps so pip resolves each independently,
 # instead of backtracking argostranslate into an old version that pulls in
 # the PyQt5 GUI toolkit (which needs a Qt build toolchain we don't have and
